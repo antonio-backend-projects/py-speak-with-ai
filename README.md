@@ -6,23 +6,24 @@ Questo progetto è un assistente vocale AI che utilizza le API di OpenAI (Whispe
 
 ## ✨ Funzionalità principali
 
-- 🎙️ Riconoscimento vocale in tempo reale con **Whisper**
-- 🤖 Risposte intelligenti con **GPT-3.5** o **GPT-4 Turbo**
-- 🔊 Sintesi vocale con **TTS OpenAI** (voci come nova, alloy, shimmer, ecc.)
-- 🌐 Interfaccia web interattiva tramite **Dash**
-- 🔄 Ciclo continuo di ascolto → risposta
-- ⏱️ Pausa automatica configurabile tra i turni di conversazione
-- 🌍 Scelta della lingua di trascrizione (es. italiano, inglese)
-- 💾 Salvataggio automatico delle conversazioni in formato CSV
+* 🎙️ Riconoscimento vocale in tempo reale con **Whisper**
+* 🤖 Risposte intelligenti con **GPT-3.5** o **GPT-4 Turbo**
+* 🔊 Sintesi vocale con **TTS OpenAI** (voci come nova, alloy, shimmer, ecc.)
+* 🌐 Interfaccia web interattiva tramite **Dash**
+* 🔄 Ciclo continuo di ascolto → risposta
+* ⏱️ Pausa automatica configurabile tra i turni di conversazione
+* 🌍 Scelta della lingua di trascrizione (es. italiano, inglese)
+* 💾 Salvataggio automatico delle conversazioni in formato CSV
 
 ---
 
 ## 📦 Requisiti di sistema
 
-- Python 3.9 o superiore
-- Connessione internet attiva
-- Microfono funzionante
-- API Key OpenAI valida
+* Python 3.9 o superiore
+* Connessione internet attiva
+* Microfono funzionante
+* API Key OpenAI valida
+* **ffmpeg** installato nel sistema (necessario per `pydub`)
 
 ---
 
@@ -46,7 +47,9 @@ pip install -r requirements.txt
 
 ---
 
-## ⚠️ Nota importante per utenti Windows: Installazione Microsoft C++ Build Tools
+## ⚠️ Nota importante per utenti Windows
+
+### Installazione Microsoft C++ Build Tools
 
 Alcuni pacchetti Python, come `simpleaudio`, richiedono un compilatore C++ per essere installati correttamente. Se ricevi errori simili a:
 
@@ -56,36 +59,33 @@ error: Microsoft Visual C++ 14.0 or greater is required.
 
 segui questi passaggi:
 
-### Passo 1 - Scarica il compilatore
+1. Visita la pagina ufficiale:
+   [https://visualstudio.microsoft.com/visual-cpp-build-tools/](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+2. Scarica ed esegui `vs_buildtools.exe`.
+3. Seleziona **Desktop development with C++** e installa.
+4. Verifica nel prompt comandi con `cl` se l’installazione è avvenuta correttamente.
+5. Reinstalla i pacchetti Python che richiedono compilazione:
 
-- Visita la pagina ufficiale:  
-  https://visualstudio.microsoft.com/visual-cpp-build-tools/
+   ```bash
+   pip install simpleaudio
+   ```
 
-- Scarica il programma di installazione chiamato `vs_buildtools.exe`.
+---
 
-### Passo 2 - Installa solo il necessario
+### Installazione di FFmpeg
 
-- Esegui `vs_buildtools.exe`.
-- Nella schermata di selezione del carico di lavoro (workload), spunta **"Desktop development with C++"**.
-- Clicca su **Installa** e attendi il completamento.
+`pydub` necessita di `ffmpeg` per gestire i file audio.
 
-### Passo 3 - Verifica installazione
-
-- Apri il Prompt dei comandi (cmd) o PowerShell.
-- Digita:
+Su Windows, puoi installare facilmente ffmpeg con **winget**:
 
 ```powershell
-cl
+winget install ffmpeg
 ```
 
-Se tutto è andato a buon fine, vedrai la versione del compilatore Microsoft C++.
-
-### Passo 4 - Reinstalla i pacchetti Python
-
-Ora puoi riprovare ad installare i pacchetti Python che necessitano di compilazione:
+Verifica l’installazione aprendo un terminale e digitando:
 
 ```bash
-pip install simpleaudio
+ffmpeg -version
 ```
 
 ---
@@ -120,26 +120,26 @@ Potrai quindi iniziare a parlare con l’assistente tramite l’interfaccia web.
 
 ## 🛠️ Struttura del progetto
 
-| File                 | Descrizione                                                   |
-|----------------------|--------------------------------------------------------------|
-| `app.py`             | Interfaccia Dash e gestione avvio/arresto del loop vocale    |
-| `assistant.py`       | Funzioni di registrazione audio, trascrizione, GPT e TTS     |
-| `.env`               | File per chiave API (non incluso nel repo)                   |
-| `conversazioni.csv`  | Log automatico delle conversazioni (timestamp, utente, risposta) |
+| File                | Descrizione                                                      |
+| ------------------- | ---------------------------------------------------------------- |
+| `app.py`            | Interfaccia Dash e gestione avvio/arresto del loop vocale        |
+| `assistant.py`      | Funzioni di registrazione audio, trascrizione, GPT e TTS         |
+| `.env`              | File per chiave API (non incluso nel repo)                       |
+| `conversazioni.csv` | Log automatico delle conversazioni (timestamp, utente, risposta) |
 
 ---
 
 ## 📄 Funzionalità in sviluppo (To-Do)
 
-- Scaricamento log conversazioni dalla GUI
-- Supporto multi-turno e memoria contestuale
-- Integrazione con dispositivi esterni e IoT
+* Scaricamento log conversazioni dalla GUI
+* Supporto multi-turno e memoria contestuale
+* Integrazione con dispositivi esterni e IoT
 
 ---
 
 ## 🧑‍💻 Autore
 
-Realizzato con ❤️ da [Il tuo nome o handle GitHub]
+Realizzato con ❤️ da \[Il tuo nome o handle GitHub]
 
 ---
 
