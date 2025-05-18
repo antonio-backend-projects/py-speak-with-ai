@@ -66,13 +66,13 @@ def save_to_csv(user_text, reply, file_path="conversazioni.csv"):
         writer = csv.writer(csvfile)
         writer.writerow([timestamp, user_text, reply])
 
-# ✅ CORRETTA QUI LA DEFINIZIONE: 2 ARGOMENTI
-def voice_loop(settings):
+def voice_loop(callback, settings):
     global stop_flag
     stop_flag = False
     while not stop_flag:
-        log_queue.put(("**[ASCOLTO]**", ""))
-
+        # Avvisa callback: inizia registrazione, si può parlare
+        callback("**[ASCOLTO]**", "")
+        
         filename = f"temp_{uuid.uuid4()}.wav"
         record_audio(filename)
         try:
@@ -81,20 +81,25 @@ def voice_loop(settings):
             user_text = ""
             print(f"Errore trascrizione: {e}")
 
-        log_queue.put((f"👤 {user_text}", "**[PENSO...]**"))
+        # Avvisa callback: finito ascolto, sto pensando
+        callback(f"👤 {user_text}", "**[PENSO...]**")
 
         if not user_text:
             os.remove(filename)
             continue
 
         reply = get_chatgpt_response(user_text, model=settings["model"])
-        log_queue.put((f"👤 {user_text}", f"🤖 {reply} [PARLO]"))
+
+        # Avvisa callback: sto parlando
+        callback(f"👤 {user_text}", f"🤖 {reply} [PARLO]")
 
         synthesize_speech(reply, voice=settings["voice"])
         os.remove(filename)
         save_to_csv(user_text, reply)
 
-        log_queue.put(("", "**[PRONTO]**"))
+        # Avvisa callback: pronto per nuova interazione
+        callback("", "**[PRONTO]**")
+
         time.sleep(settings["pause"])
 
 def stop_loop():
