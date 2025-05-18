@@ -1,0 +1,24 @@
+# Ambiente virtuale
+venv/
+.env
+.env.*
+
+# File audio temporanei
+*.wav
+*.mp3
+temp_*.wav
+__pycache__/
+
+# File di log e CSV salvati
+*.csv
+*.log
+
+# File di sistema
+.DS_Store
+Thumbs.db
+
+# Python cache
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
