@@ -8,11 +8,6 @@ import csv
 from datetime import datetime
 from dotenv import load_dotenv
 
-from pydub import AudioSegment    # pip install pydub
-import simpleaudio as sa          # pip install simpleaudio
-import queue
-
-log_queue = queue.Queue()
 load_dotenv()
 
 client = OpenAI()
@@ -42,23 +37,22 @@ def get_chatgpt_response(prompt, model="gpt-4-turbo"):
     )
     return response.choices[0].message.content
 
-def synthesize_speech(text, voice="nova"):
-    filename = f"response_{uuid.uuid4()}.mp3"
+def synthesize_speech(text, filename="response.mp3", voice="nova"):
     response = client.audio.speech.create(
         model="tts-1",
         voice=voice,
         input=text
     )
     with open(filename, "wb") as f:
-        f.write(response.read())
+        f.write(response.read())  # <-- qui cambio
+    # Riproduci file audio
+    if os.name == 'nt':
+        os.system(f"start {filename}")
+    elif os.uname().sysname == 'Darwin':
+        os.system(f"afplay {filename}")
+    else:
+        os.system(f"mpg123 {filename} || aplay {filename} || paplay {filename}")
 
-    # Riproduzione audio mp3 con pydub + simpleaudio (sincrono)
-    sound = AudioSegment.from_file(filename, format="mp3")
-    play_obj = sa.play_buffer(sound.raw_data, num_channels=sound.channels,
-                              bytes_per_sample=sound.sample_width, sample_rate=sound.frame_rate)
-    play_obj.wait_done()
-
-    os.remove(filename)
 
 def save_to_csv(user_text, reply, file_path="conversazioni.csv"):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -66,13 +60,10 @@ def save_to_csv(user_text, reply, file_path="conversazioni.csv"):
         writer = csv.writer(csvfile)
         writer.writerow([timestamp, user_text, reply])
 
-# ✅ CORRETTA QUI LA DEFINIZIONE: 2 ARGOMENTI
-def voice_loop(settings):
+def voice_loop(callback, settings):
     global stop_flag
     stop_flag = False
     while not stop_flag:
-        log_queue.put(("**[ASCOLTO]**", ""))
-
         filename = f"temp_{uuid.uuid4()}.wav"
         record_audio(filename)
         try:
@@ -80,21 +71,14 @@ def voice_loop(settings):
         except Exception as e:
             user_text = ""
             print(f"Errore trascrizione: {e}")
-
-        log_queue.put((f"👤 {user_text}", "**[PENSO...]**"))
-
         if not user_text:
             os.remove(filename)
             continue
-
         reply = get_chatgpt_response(user_text, model=settings["model"])
-        log_queue.put((f"👤 {user_text}", f"🤖 {reply} [PARLO]"))
-
         synthesize_speech(reply, voice=settings["voice"])
         os.remove(filename)
         save_to_csv(user_text, reply)
-
-        log_queue.put(("", "**[PRONTO]**"))
+        callback(user_text, reply)
         time.sleep(settings["pause"])
 
 def stop_loop():
