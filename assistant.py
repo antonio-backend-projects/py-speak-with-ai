@@ -5,98 +5,195 @@ import uuid
 import os
 import time
 import csv
+import threading
+import traceback
 from datetime import datetime
 from dotenv import load_dotenv
+from pydub import AudioSegment
+import simpleaudio as sa
+from queue import Queue, Empty
+from tenacity import retry, stop_after_attempt, wait_exponential
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from functools import lru_cache
 
-from pydub import AudioSegment    # pip install pydub
-import simpleaudio as sa          # pip install simpleaudio
-import queue
-
-log_queue = queue.Queue()
 load_dotenv()
 
-client = OpenAI()
+@dataclass
+class AppState:
+    is_running: bool = False
+    current_status: str = "Inattivo"
+    conversation: list = field(default_factory=list)
+    settings: dict = field(default_factory=dict)
+    _lock: threading.Lock = field(default_factory=threading.Lock)
 
-SAMPLE_RATE = 44100
-DURATION = 5
-stop_flag = False
+    # Aggiungi questo metodo
+    def get_conversation(self):
+        with self._lock:
+            return self.conversation.copy()
 
-def record_audio(filename):
-    recording = sd.rec(int(SAMPLE_RATE * DURATION), samplerate=SAMPLE_RATE, channels=1)
-    sd.wait()
-    scipy.io.wavfile.write(filename, SAMPLE_RATE, recording)
+    def update_status(self, new_status):
+        with self._lock:
+            self.current_status = new_status
+    
+    def update_settings(self, lang, model, voice, pause):
+        with self._lock:
+            self.settings = {
+                "language": lang,
+                "model": model,
+                "voice": voice,
+                "pause": pause
+            }
+    
+    def add_conversation(self, user, system):
+        with self._lock:
+            self.conversation.append(f"{user}\n{system}\n")
+    
+    def stop(self):
+        with self._lock:
+            self.is_running = False
+    
+    def reset(self):
+        with self._lock:
+            self.__init__()
 
-def transcribe_audio(filename, language="it"):
-    with open(filename, "rb") as audio_file:
-        transcript = client.audio.transcriptions.create(
-            file=audio_file,
-            model="whisper-1",
-            language=language
-        )
-    return transcript.text
+class LogManager:
+    def __init__(self):
+        self.queue = Queue(maxsize=100)
+        self.history = []
+        self._lock = threading.Lock()
 
-def get_chatgpt_response(prompt, model="gpt-4-turbo"):
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.choices[0].message.content
+    def add_log(self, user_msg, system_msg):
+        with self._lock:
+            entry = {
+                "timestamp": datetime.now().isoformat(),
+                "user": user_msg,
+                "system": system_msg
+            }
+            try:
+                self.queue.put_nowait(entry)
+                self.history.append(entry)
+            except:
+                pass
 
-def synthesize_speech(text, voice="nova"):
-    filename = f"response_{uuid.uuid4()}.mp3"
-    response = client.audio.speech.create(
-        model="tts-1",
-        voice=voice,
-        input=text
-    )
-    with open(filename, "wb") as f:
-        f.write(response.read())
+    def get_logs(self):
+        logs = []
+        while True:
+            try:
+                logs.append(self.queue.get_nowait())
+            except Empty:
+                break
+        return logs
 
-    # Riproduzione audio mp3 con pydub + simpleaudio (sincrono)
-    sound = AudioSegment.from_file(filename, format="mp3")
-    play_obj = sa.play_buffer(sound.raw_data, num_channels=sound.channels,
-                              bytes_per_sample=sound.sample_width, sample_rate=sound.frame_rate)
-    play_obj.wait_done()
+log_manager = LogManager()
+stop_event = threading.Event()
 
-    os.remove(filename)
+@lru_cache(maxsize=1)
+def get_openai_client():
+    return OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-def save_to_csv(user_text, reply, file_path="conversazioni.csv"):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(file_path, "a", newline='', encoding="utf-8") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow([timestamp, user_text, reply])
-
-# ✅ CORRETTA QUI LA DEFINIZIONE: 2 ARGOMENTI
-def voice_loop(settings):
-    global stop_flag
-    stop_flag = False
-    while not stop_flag:
-        log_queue.put(("**[ASCOLTO]**", ""))
-
-        filename = f"temp_{uuid.uuid4()}.wav"
-        record_audio(filename)
-        try:
-            user_text = transcribe_audio(filename, language=settings["language"])
-        except Exception as e:
-            user_text = ""
-            print(f"Errore trascrizione: {e}")
-
-        log_queue.put((f"👤 {user_text}", "**[PENSO...]**"))
-
-        if not user_text:
+@contextmanager
+def temp_audio_file():
+    filename = f"temp_{uuid.uuid4()}.wav"
+    try:
+        yield filename
+    finally:
+        if os.path.exists(filename):
             os.remove(filename)
-            continue
 
-        reply = get_chatgpt_response(user_text, model=settings["model"])
-        log_queue.put((f"👤 {user_text}", f"🤖 {reply} [PARLO]"))
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1))
+def record_audio(filename):
+    try:
+        recording = sd.rec(int(44100 * 5), samplerate=44100, channels=1)
+        sd.wait()
+        scipy.io.wavfile.write(filename, 44100, recording)
+    except sd.PortAudioError as e:
+        log_manager.add_log("SYSTEM", f"Errore registrazione: {str(e)}")
+        raise
 
-        synthesize_speech(reply, voice=settings["voice"])
-        os.remove(filename)
-        save_to_csv(user_text, reply)
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1))
+def transcribe_audio(filename, language):
+    try:
+        with open(filename, "rb") as audio_file:
+            transcript = get_openai_client().audio.transcriptions.create(
+                file=audio_file,
+                model="whisper-1",
+                language=language
+            )
+        return transcript.text
+    except Exception as e:
+        log_manager.add_log("SYSTEM", f"Errore trascrizione: {str(e)}")
+        raise
 
-        log_queue.put(("", "**[PRONTO]**"))
-        time.sleep(settings["pause"])
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1))
+def get_chatgpt_response(prompt, model):
+    try:
+        response = get_openai_client().chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        log_manager.add_log("SYSTEM", f"Errore GPT: {str(e)}")
+        raise
 
-def stop_loop():
-    global stop_flag
-    stop_flag = True
+def synthesize_speech(text, voice):
+    try:
+        filename = f"response_{uuid.uuid4()}.mp3"
+        response = get_openai_client().audio.speech.create(
+            model="tts-1",
+            voice=voice,
+            input=text
+        )
+        
+        with open(filename, "wb") as f:
+            f.write(response.read())
+
+        def play_audio():
+            try:
+                sound = AudioSegment.from_file(filename, format="mp3")
+                play_obj = sa.play_buffer(
+                    sound.raw_data,
+                    num_channels=sound.channels,
+                    bytes_per_sample=sound.sample_width,
+                    sample_rate=sound.frame_rate
+                )
+                play_obj.wait_done()
+                os.remove(filename)
+            except Exception as e:
+                log_manager.add_log("SYSTEM", f"Errore riproduzione: {str(e)}")
+
+        threading.Thread(target=play_audio, daemon=True).start()
+
+    except Exception as e:
+        log_manager.add_log("SYSTEM", f"Errore sintesi vocale: {str(e)}")
+        raise
+
+def voice_loop(settings):
+    stop_event.clear()
+    while not stop_event.is_set():
+        try:
+            log_manager.add_log("**[ASCOLTO]**", "")
+            
+            with temp_audio_file() as filename:
+                record_audio(filename)
+                user_text = transcribe_audio(filename, settings["language"])
+                
+                if not user_text:
+                    continue
+
+                log_manager.add_log(f"👤 {user_text}", "**[PENSO...]**")
+                reply = get_chatgpt_response(user_text, settings["model"])
+                log_manager.add_log("", f"🤖 {reply} [PARLO]")
+                synthesize_speech(reply, settings["voice"])
+                
+                with threading.Lock():
+                    with open("conversazioni.csv", "a", newline='', encoding="utf-8") as f:
+                        writer = csv.writer(f)
+                        writer.writerow([datetime.now().isoformat(), user_text, reply])
+
+                time.sleep(settings["pause"])
+        
+        except Exception as e:
+            log_manager.add_log("SYSTEM", f"Errore loop: {traceback.format_exc()}")
+            stop_event.set()

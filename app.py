@@ -1,30 +1,18 @@
 from dash import Dash, html, dcc, Output, Input, State
 import dash_bootstrap_components as dbc
+from dataclasses import dataclass, field
 import threading
-from assistant import voice_loop, stop_loop, log_queue
-
+from assistant import voice_loop, stop_event, log_manager, AppState
+import time
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 server = app.server
 
-conversation = []
-current_status = "Inattivo"
-lock = threading.Lock()
-
-# Stato globale per gestire UI (start/stop)
-is_running = False
-
-# Impostazioni di default
-user_settings = {
-    "language": "it",
-    "model": "gpt-4-turbo",
-    "voice": "nova",
-    "pause": 1.0
-}
+app_state = AppState()
 
 app.layout = dbc.Container([
     html.H2("🗣️ Assistente Vocale OpenAI", className="my-3"),
-
+    
     dbc.Row([
         dbc.Col([
             dbc.Label("Lingua trascrizione"),
@@ -82,7 +70,16 @@ app.layout = dbc.Container([
         "fontFamily": "monospace",
         "fontSize": "14px"
     }),
+    
     dcc.Interval(id="interval", interval=1000, n_intervals=0, disabled=True),
+    dcc.Store(id='conversation-store'),
+    
+    dbc.Accordion([
+        dbc.AccordionItem(
+            title="Storico Conversazioni",
+            children=html.Div(id="history-log")
+        )
+    ])
 ])
 
 @app.callback(
@@ -97,39 +94,20 @@ app.layout = dbc.Container([
     prevent_initial_call=True
 )
 def start_conversation(n_clicks, lang, model, voice, pause):
-    global is_running, current_status
-    if is_running:
+    if app_state.is_running:
         return False, True, False
 
-    is_running = True
-    with lock:
-        current_status = "Avviato"
-        conversation.clear()
+    app_state.reset()
+    app_state.update_settings(lang, model, voice, max(0.5, min(float(pause), 5.0)))
 
-    user_settings.update({
-        "language": lang,
-        "model": model,
-        "voice": voice,
-        "pause": pause
-    })
+    def start_thread():
+        try:
+            voice_loop(app_state.settings)
+        except Exception as e:
+            app_state.add_system_log(f"Errore thread: {str(e)}")
+            app_state.stop()
 
-    def update_log(user_text, reply):
-        global current_status
-        with lock:
-            if user_text.startswith("**[ASCOLTO]**"):
-                current_status = "🎤 Ascolto"
-            elif user_text.startswith("**[PENSO...]**"):
-                current_status = "⏳ Penso"
-            elif "[PARLO]" in reply:
-                current_status = "🔊 Parlo"
-                reply = reply.replace("[PARLO]", "").strip()
-            elif reply == "**[PRONTO]**":
-                current_status = "✅ Pronto"
-
-            if user_text not in ["**[ASCOLTO]**", "**[PENSO...]**"] and reply not in ["**[PRONTO]**"]:
-                conversation.append(f"{user_text}\n{reply}\n")
-
-    threading.Thread(target=voice_loop, args=(user_settings,), daemon=True).start()
+    threading.Thread(target=start_thread, daemon=True).start()
     return False, True, False
 
 @app.callback(
@@ -138,27 +116,22 @@ def start_conversation(n_clicks, lang, model, voice, pause):
     Input("interval", "n_intervals"),
 )
 def update_output(n):
-    global current_status
-    updated = False
-    while not log_queue.empty():
-        user_text, reply = log_queue.get()
-        if user_text.startswith("**[ASCOLTO]**"):
-            current_status = "🎤 Ascolto"
-        elif user_text.startswith("**[PENSO...]**"):
-            current_status = "⏳ Penso"
-        elif "[PARLO]" in reply:
-            current_status = "🔊 Parlo"
-            reply = reply.replace("[PARLO]", "").strip()
-        elif reply == "**[PRONTO]**":
-            current_status = "✅ Pronto"
-        
-        if user_text not in ["**[ASCOLTO]**", "**[PENSO...]**"] and reply not in ["**[PRONTO]**"]:
-            conversation.append(f"{user_text}\n{reply}\n")
-        updated = True
-
-    text = "\n".join(conversation)
-    return text, current_status
-
+    logs = log_manager.get_logs()
+    status = "Inattivo"
+    
+    for log in logs:
+        if log['user'] == "**[ASCOLTO]**":
+            status = "🎤 Ascolto"
+        elif "PENSO" in log['system']:
+            status = "⏳ Elaborazione"
+        elif "[PARLO]" in log['system']:
+            status = "🔊 Riproduzione"
+            app_state.add_conversation(log['user'], log['system'].replace("[PARLO]", ""))
+        elif log['system'] == "**[PRONTO]**":
+            status = "✅ Pronto"
+    
+    app_state.update_status(status)
+    return "\n".join(app_state.get_conversation()), app_state.current_status
 
 @app.callback(
     Output("interval", "disabled", allow_duplicate=True),
@@ -168,12 +141,9 @@ def update_output(n):
     prevent_initial_call=True
 )
 def stop_conversation(n_clicks):
-    global is_running, current_status
-    stop_loop()
-    is_running = False
-    with lock:
-        current_status = "Interrotto"
+    app_state.stop()
+    stop_event.set()
     return True, False, True
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=False, dev_tools_ui=False)
